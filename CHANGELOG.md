@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.3 — 01/11/2026
+
+### Corrigido
+
+- A fila aleatória restante é migrada imediatamente para a geração 3, sem
+  repetir as imagens já exibidas. A nova ordem evita imagens vizinhas na ordem
+  natural da pasta e interrompe progressões longas na mesma direção.
+- Na primeira execução, o Kwall pergunta se deve iniciar junto com o Windows.
+  **Sim** registra automaticamente o executável atual; **Não** remove uma entrada
+  anterior e a escolha fica salva para não perguntar novamente.
+- Exceções da interface deixam de derrubar silenciosamente a bandeja; elas são
+  registradas em `%APPDATA%\Kwall\kwall.log` e o ciclo do aplicativo se recupera
+  quando termina sem uma solicitação explícita de saída.
+- Tarefas em segundo plano agora capturam um contexto válido da interface, sem
+  descartar avisos ou uma reaplicação pendente durante a inicialização.
+- O autoteste agora restaura o arquivo de configuração byte a byte, impedindo
+  que uma compilação altere a rodada, o histórico ou o wallpaper atual.
+
+### Adicionado
+
+- O submenu de intervalo agora também oferece 15 e 20 segundos.
+- O menu de contexto do papel de parede recebe a opção **Kwall**, que abre o
+  mesmo menu completo da bandeja na posição atual do mouse.
+
+### Verificado
+
+- O autoteste passou em 32 verificações, incluindo antipadrões da ordem
+  aleatória, comando do menu do desktop, retorno seguro à interface,
+  preservação de caminhos com espaços e as duas respostas da pergunta inicial.
+
 ## 1.2.2 — 31/10/2026
 
 ### Corrigido

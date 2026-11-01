@@ -50,6 +50,8 @@ whole folder as one round before repeating anything.
 The tray menu provides Next, Previous, Pause/Resume, open current image in
 Explorer, random or sequential order, intervals from 10 seconds to one hour,
 screen fit modes, manual framing, recent folders, subfolders, and folder reload.
+The same controls are available from the **Kwall** entry in the desktop
+background context menu.
 
 Supported formats: JPG, JPEG, JFIF, PNG, BMP, GIF, TIF, TIFF, and DIB.
 
@@ -59,8 +61,9 @@ Supported formats: JPG, JPEG, JFIF, PNG, BMP, GIF, TIF, TIFF, and DIB.
 2. Keep it in a permanent folder, such as `C:\Users\<you>\Programs\Kwall`.
 3. Run it and choose your wallpaper folder.
 
-To start it with Windows, press `Win + R`, enter `shell:startup`, and place a
-shortcut to the executable in that folder.
+On its first launch, Kwall asks whether it should start automatically with
+Windows. **Yes** registers the current executable; **No** leaves startup disabled
+and the question is not shown again.
 
 Configuration is stored at `%APPDATA%\Kwall\config.txt`.
 
@@ -79,9 +82,10 @@ Run the built-in test suite with:
 ./Kwall.exe --autoteste
 ```
 
-The current source passes 27 checks covering folder scanning, natural order,
+The current source passes 32 checks covering folder scanning, natural order,
 navigation, distinct consecutive rounds, cross-round spacing, recent folders, EXIF orientation, fit
-modes, framing memory, pixel conversion, and concurrent reapplication. Test
+modes, anti-sequential shuffling, desktop controls, framing memory, pixel conversion,
+UI dispatch, startup paths, and concurrent reapplication. Test
 mode does not change the user's wallpaper.
 
 ## Support the project

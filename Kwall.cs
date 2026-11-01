@@ -24,9 +24,9 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Kwall")]
 [assembly: AssemblyProduct("Kwall")]
 [assembly: AssemblyDescription("Trocador leve de papel de parede para Windows")]
-[assembly: AssemblyVersion("1.2.2.0")]
-[assembly: AssemblyFileVersion("1.2.2.0")]
-[assembly: AssemblyInformationalVersion("1.2.2")]
+[assembly: AssemblyVersion("1.2.3.0")]
+[assembly: AssemblyFileVersion("1.2.3.0")]
+[assembly: AssemblyInformationalVersion("1.2.3")]
 
 namespace Kwall
 {
@@ -45,6 +45,9 @@ namespace Kwall
 
         [DllImport("user32.dll")]
         public static extern bool DestroyIcon(IntPtr icone);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr janela);
 
         [DllImport("kernel32.dll")]
         public static extern bool AttachConsole(int processo);
@@ -83,6 +86,120 @@ namespace Kwall
         }
     }
 
+    static class Diagnostico
+    {
+        static readonly object trava = new object();
+
+        public static string CaminhoLog()
+        {
+            string dir = Path.Combine(Environment.GetFolderPath(
+                Environment.SpecialFolder.ApplicationData), "Kwall");
+            Directory.CreateDirectory(dir);
+            return Path.Combine(dir, "kwall.log");
+        }
+
+        public static void Registrar(string origem, Exception erro)
+        {
+            try
+            {
+                lock (trava)
+                {
+                    string caminho = CaminhoLog();
+                    if (File.Exists(caminho) && new FileInfo(caminho).Length > 1024 * 1024)
+                        File.Delete(caminho);
+                    File.AppendAllText(caminho,
+                        DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " [" + origem + "] " +
+                        erro + Environment.NewLine + Environment.NewLine, Encoding.UTF8);
+                }
+            }
+            catch { }
+        }
+    }
+
+    static class Inicializacao
+    {
+        public static string Comando(string executavel)
+        {
+            return "\"" + executavel + "\"";
+        }
+
+        public static bool Aceitou(DialogResult resposta)
+        {
+            return resposta == DialogResult.Yes;
+        }
+
+        public static void Definir(bool ativar)
+        {
+            try
+            {
+                using (RegistryKey k = Registry.CurrentUser.CreateSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Run"))
+                {
+                    if (ativar)
+                        k.SetValue("Kwall", Comando(Application.ExecutablePath),
+                            RegistryValueKind.String);
+                    else
+                        k.DeleteValue("Kwall", false);
+                    k.DeleteValue("KaelithWall", false);
+                }
+            }
+            catch (Exception e) { Diagnostico.Registrar("inicializacao", e); }
+        }
+    }
+
+    static class MenuDesktop
+    {
+        const string Chave = @"Software\Classes\DesktopBackground\Shell\Kwall";
+
+        public static string Comando(string executavel)
+        {
+            return "\"" + executavel + "\" --menu";
+        }
+
+        public static void Registrar()
+        {
+            try
+            {
+                using (RegistryKey menu = Registry.CurrentUser.CreateSubKey(Chave))
+                {
+                    menu.SetValue("MUIVerb", "Kwall", RegistryValueKind.String);
+                    menu.SetValue("Icon", Application.ExecutablePath,
+                        RegistryValueKind.String);
+                    menu.SetValue("Position", "Top", RegistryValueKind.String);
+                    using (RegistryKey comando = menu.CreateSubKey("command"))
+                        comando.SetValue(null, Comando(Application.ExecutablePath),
+                            RegistryValueKind.String);
+                }
+                Registry.CurrentUser.DeleteSubKeyTree(
+                    @"Software\Classes\DesktopBackground\Shell\KaelithWall", false);
+            }
+            catch (Exception e) { Diagnostico.Registrar("menu-desktop", e); }
+        }
+    }
+
+    static class ControleRemoto
+    {
+        public const string EventoMenu = @"Local\Kwall_abrir_menu";
+
+        public static bool PedirMenu()
+        {
+            try
+            {
+                using (EventWaitHandle evento = EventWaitHandle.OpenExisting(EventoMenu))
+                {
+                    evento.Set();
+                    return true;
+                }
+            }
+            catch (WaitHandleCannotBeOpenedException) { return false; }
+            catch (Exception e)
+            {
+                Diagnostico.Registrar("controle-remoto", e);
+                return false;
+            }
+        }
+    }
+
     sealed class Config
     {
         public string Pasta = "";
@@ -95,6 +212,8 @@ namespace Kwall
         public bool MemoriaExibicao = false;
         public int VersaoRandomizacao = 0;
         public bool PosicoesIdentificadas = false;
+        public bool InicioWindowsDefinido = false;
+        public bool IniciarWindows = false;
         public readonly List<string> PastasRecentes = new List<string>();
         public readonly List<string> OrdemAleatoria = new List<string>();
         public readonly List<string> ExibidasNaRodada = new List<string>();
@@ -105,7 +224,7 @@ namespace Kwall
         readonly Dictionary<string, PointF> posicoesPorId =
             new Dictionary<string, PointF>(StringComparer.Ordinal);
 
-        static string Caminho()
+        public static string Caminho()
         {
             string raiz = Environment.GetFolderPath(
                 Environment.SpecialFolder.ApplicationData);
@@ -161,6 +280,10 @@ namespace Kwall
                         case "randomizacao": int.TryParse(valor, out c.VersaoRandomizacao); break;
                         case "posicoes_identificadas":
                             c.PosicoesIdentificadas = (valor == "1"); break;
+                        case "inicio_windows_definido":
+                            c.InicioWindowsDefinido = (valor == "1"); break;
+                        case "iniciar_windows":
+                            c.IniciarWindows = (valor == "1"); break;
                         case "ordem_aleatoria":
                             try
                             {
@@ -230,10 +353,10 @@ namespace Kwall
             }
             catch { }
             if (c.Intervalo < 5) c.Intervalo = 5;
-            if (c.VersaoRandomizacao < 2)
+            if (c.VersaoRandomizacao < 3)
             {
                 c.OrdemAleatoria.Clear();
-                c.VersaoRandomizacao = 2;
+                c.VersaoRandomizacao = 3;
             }
             if (c.HistoricoRecente.Count == 0)
                 c.HistoricoRecente.AddRange(c.ExibidasNaRodada);
@@ -266,6 +389,9 @@ namespace Kwall
                 sb.AppendLine("randomizacao=" + VersaoRandomizacao.ToString());
                 sb.AppendLine("posicoes_identificadas=" +
                     (PosicoesIdentificadas ? "1" : "0"));
+                sb.AppendLine("inicio_windows_definido=" +
+                    (InicioWindowsDefinido ? "1" : "0"));
+                sb.AppendLine("iniciar_windows=" + (IniciarWindows ? "1" : "0"));
                 foreach (string arquivo in OrdemAleatoria)
                     sb.AppendLine("ordem_aleatoria=" + Convert.ToBase64String(
                         Encoding.UTF8.GetBytes(arquivo)));
@@ -498,20 +624,25 @@ namespace Kwall
         readonly System.Windows.Forms.Timer relogio;
         readonly SynchronizationContext linhaPrincipal;
         readonly RandomNumberGenerator sorte = RandomNumberGenerator.Create();
+        readonly EventWaitHandle eventoMenu;
+        readonly RegisteredWaitHandle esperaMenu;
         readonly bool teste;   // em autoteste nao mexe no papel de parede de verdade
 
         List<string> ordem = new List<string>();
         int pos = -1;
         int trocando;              // trava simples: 0 livre, 1 ocupado
         int reaplicar;             // guarda o ultimo pedido feito durante uma troca
+        int liberado;
         string erroUltimo = "";
 
         ToolStripMenuItem itemAtual, itemPausar, itemAleatorio, itemSequencia, itemSubpastas;
         ToolStripMenuItem menuIntervalo, menuAjuste, menuPastasRecentes;
 
-        public Bandeja() : this(false) { }
+        public Bandeja() : this(false, false) { }
 
-        public Bandeja(bool modoTeste)
+        public Bandeja(bool modoTeste) : this(modoTeste, false) { }
+
+        public Bandeja(bool modoTeste, bool abrirMenu)
         {
             teste = modoTeste;
             linhaPrincipal = SynchronizationContext.Current;
@@ -523,6 +654,16 @@ namespace Kwall
             icone.Visible = !teste;
             icone.DoubleClick += delegate { Trocar(+1); };
             icone.ContextMenuStrip = MontarMenu();
+
+            bool eventoNovo;
+            eventoMenu = new EventWaitHandle(false, EventResetMode.AutoReset,
+                ControleRemoto.EventoMenu, out eventoNovo);
+            esperaMenu = ThreadPool.RegisterWaitForSingleObject(eventoMenu,
+                delegate(object estado, bool expirou)
+                {
+                    if (!expirou && linhaPrincipal != null)
+                        linhaPrincipal.Post(delegate { MostrarMenu(); }, null);
+                }, null, Timeout.Infinite, false);
 
             relogio = new System.Windows.Forms.Timer();
             relogio.Tick += delegate { Trocar(+1); };
@@ -539,6 +680,17 @@ namespace Kwall
                 EscolherPasta(null, null);
 
             Aplicar();
+            if (abrirMenu && linhaPrincipal != null)
+                linhaPrincipal.Post(delegate { MostrarMenu(); }, null);
+        }
+
+        void MostrarMenu()
+        {
+            if (!teste && icone.ContextMenuStrip != null)
+            {
+                icone.ContextMenuStrip.Show(Cursor.Position);
+                Nativo.SetForegroundWindow(icone.ContextMenuStrip.Handle);
+            }
         }
 
         // ---------- menu ----------
@@ -570,6 +722,8 @@ namespace Kwall
 
             menuIntervalo = new ToolStripMenuItem("&Intervalo");
             AddIntervalo(10, "10 segundos");
+            AddIntervalo(15, "15 segundos");
+            AddIntervalo(20, "20 segundos");
             AddIntervalo(30, "30 segundos");
             AddIntervalo(60, "1 minuto");
             AddIntervalo(300, "5 minutos");
@@ -684,15 +838,68 @@ namespace Kwall
 
         void Embaralhar(List<string> lista, string evitarNoInicio)
         {
-            for (int i = lista.Count - 1; i > 0; i--)
+            if (lista.Count < 2) return;
+
+            // A ordem continua aleatoria, mas evita o padrao que o olho humano
+            // reconhece como uma travessia gradual da pasta.
+            List<string> referencia = new List<string>(lista);
+            if (evitarNoInicio != null && IndiceDe(referencia, evitarNoInicio) < 0)
+                referencia.Add(evitarNoInicio);
+            referencia.Sort(new OrdemNatural());
+            Dictionary<string, int> indiceNatural = new Dictionary<string, int>(
+                StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < referencia.Count; i++) indiceNatural[referencia[i]] = i;
+
+            List<string> restantes = new List<string>(lista);
+            for (int i = restantes.Count - 1; i > 0; i--)
             {
                 int j = Sortear(i + 1);
-                string t = lista[i]; lista[i] = lista[j]; lista[j] = t;
+                string t = restantes[i]; restantes[i] = restantes[j]; restantes[j] = t;
             }
-            // Nao repetir de cara a imagem que acabou de sair.
-            if (lista.Count > 1 && evitarNoInicio != null && lista[0] == evitarNoInicio)
+
+            lista.Clear();
+            int anterior = -1;
+            if (evitarNoInicio != null) indiceNatural.TryGetValue(evitarNoInicio, out anterior);
+            int direcaoAnterior = 0;
+            int passosNaDirecao = 0;
+            int distanciaMinima = Math.Max(2, referencia.Count / 12);
+
+            while (restantes.Count > 0)
             {
-                string t = lista[0]; lista[0] = lista[1]; lista[1] = t;
+                List<int> validos = new List<int>();
+                for (int relaxar = 0; relaxar < 3 && validos.Count == 0; relaxar++)
+                {
+                    for (int i = 0; i < restantes.Count; i++)
+                    {
+                        string candidato = restantes[i];
+                        if (lista.Count == 0 && restantes.Count > 1 &&
+                            string.Equals(candidato, evitarNoInicio,
+                                StringComparison.OrdinalIgnoreCase)) continue;
+                        int atual = indiceNatural[candidato];
+                        int direcao = anterior < 0 ? 0 : Math.Sign(atual - anterior);
+                        bool progressaoLonga = direcao != 0 &&
+                            direcao == direcaoAnterior && passosNaDirecao >= 2;
+                        bool perto = anterior >= 0 &&
+                            Math.Abs(atual - anterior) < distanciaMinima;
+                        if ((relaxar >= 1 || !perto) &&
+                            (relaxar >= 2 || !progressaoLonga)) validos.Add(i);
+                    }
+                }
+
+                int escolhido = validos.Count > 0
+                    ? validos[Sortear(validos.Count)] : Sortear(restantes.Count);
+                string proximo = restantes[escolhido];
+                int indice = indiceNatural[proximo];
+                int novaDirecao = anterior < 0 ? 0 : Math.Sign(indice - anterior);
+                if (novaDirecao != 0)
+                {
+                    passosNaDirecao = novaDirecao == direcaoAnterior
+                        ? passosNaDirecao + 1 : 1;
+                    direcaoAnterior = novaDirecao;
+                }
+                lista.Add(proximo);
+                anterior = indice;
+                restantes.RemoveAt(escolhido);
             }
         }
 
@@ -740,7 +947,7 @@ namespace Kwall
             List<string> candidata = new List<string>();
             for (int tentativa = 0; tentativa < 256; tentativa++)
             {
-                Embaralhar(restantes, null);
+                Embaralhar(restantes, atual);
                 AfastarRecentesDoInicio(restantes, historico);
                 candidata.Clear();
                 if (atual != null) candidata.Add(atual);
@@ -858,7 +1065,7 @@ namespace Kwall
                     PrepararNovaRodada(novos, atual,
                         cfg.RodadaAnterior, cfg.HistoricoRecente);
                 else
-                    Embaralhar(novos, null);
+                    Embaralhar(novos, atual);
                 preservada.AddRange(novos);
 
                 cfg.OrdemAleatoria.Clear();
@@ -1205,11 +1412,20 @@ namespace Kwall
 
         void Sair()
         {
+            Programa.SolicitarSaida();
+            Liberar();
+            ExitThread();
+        }
+
+        public void Liberar()
+        {
+            if (Interlocked.Exchange(ref liberado, 1) != 0) return;
             relogio.Stop();
+            esperaMenu.Unregister(null);
+            eventoMenu.Dispose();
             sorte.Dispose();
             icone.Visible = false;
             icone.Dispose();
-            ExitThread();
         }
 
         // ---------- autoteste ----------
@@ -1274,6 +1490,29 @@ namespace Kwall
             for (int i = 0; i < ordem.Count; i++)
                 if (ordem[i] != sequencial[i]) mexeu = true;
             checar(mexeu, "modo aleatorio realmente embaralha");
+
+            List<string> antiSequencia = new List<string>();
+            for (int i = 0; i < 120; i++) antiSequencia.Add("foto-" + i + ".png");
+            Embaralhar(antiSequencia, null);
+            List<string> referenciaNatural = new List<string>(antiSequencia);
+            referenciaNatural.Sort(new OrdemNatural());
+            Dictionary<string, int> posicaoNatural = new Dictionary<string, int>();
+            for (int i = 0; i < referenciaNatural.Count; i++)
+                posicaoNatural[referenciaNatural[i]] = i;
+            int direcaoAnteriorTeste = 0, passosTeste = 0, maiorProgressao = 1;
+            int vizinhas = 0;
+            for (int i = 1; i < antiSequencia.Count; i++)
+            {
+                int salto = posicaoNatural[antiSequencia[i]] -
+                    posicaoNatural[antiSequencia[i - 1]];
+                if (Math.Abs(salto) < referenciaNatural.Count / 12) vizinhas++;
+                int direcao = Math.Sign(salto);
+                passosTeste = direcao == direcaoAnteriorTeste ? passosTeste + 1 : 1;
+                direcaoAnteriorTeste = direcao;
+                maiorProgressao = Math.Max(maiorProgressao, passosTeste + 1);
+            }
+            checar(maiorProgressao <= 4 && vizinhas < antiSequencia.Count / 10,
+                   "modo aleatorio quebra progressoes e vizinhancas da ordem da pasta");
 
             List<string> ordemComRecentes = new List<string>();
             List<string> historicoRecente = new List<string>();
@@ -1410,6 +1649,17 @@ namespace Kwall
             bool repetiuTroca = LiberarTroca(ref trocaTeste, ref reaplicarTeste);
             checar(primeiraTroca && !segundaTroca && repetiuTroca,
                    "o ultimo ajuste pedido durante uma troca nao e descartado");
+            checar(linhaPrincipal != null,
+                   "tarefas em segundo plano conseguem voltar para a interface");
+            checar(Inicializacao.Comando(@"C:\Program Files\Kwall\Kwall.exe") ==
+                   "\"C:\\Program Files\\Kwall\\Kwall.exe\"",
+                   "inicializacao do Windows preserva caminhos com espacos");
+            checar(Inicializacao.Aceitou(DialogResult.Yes) &&
+                   !Inicializacao.Aceitou(DialogResult.No),
+                   "a pergunta inicial respeita Sim e Nao");
+            checar(MenuDesktop.Comando(@"C:\Program Files\Kwall\Kwall.exe") ==
+                   "\"C:\\Program Files\\Kwall\\Kwall.exe\" --menu",
+                   "menu do desktop chama o executavel mesmo com espacos no caminho");
 
             r.AppendLine(falhas == 0
                 ? "RESULTADO: todos os testes passaram."
@@ -1471,15 +1721,55 @@ namespace Kwall
 
     static class Programa
     {
+        static bool saidaSolicitada;
+
+        public static void SolicitarSaida() { saidaSolicitada = true; }
+
+        static void PrepararRobustez()
+        {
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += delegate(object remetente,
+                ThreadExceptionEventArgs e)
+            {
+                Diagnostico.Registrar("interface", e.Exception);
+            };
+            AppDomain.CurrentDomain.UnhandledException += delegate(object remetente,
+                UnhandledExceptionEventArgs e)
+            {
+                Exception erro = e.ExceptionObject as Exception ??
+                    new Exception(Convert.ToString(e.ExceptionObject));
+                Diagnostico.Registrar("fatal", erro);
+            };
+            SynchronizationContext.SetSynchronizationContext(
+                new WindowsFormsSynchronizationContext());
+        }
+
         [STAThread]
         static int Main(string[] args)
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            PrepararRobustez();
 
             if (args.Length > 0 && args[0] == "--autoteste")
             {
-                string relatorio = new Bandeja(true).Autoteste();
+                string caminhoConfig = Config.Caminho();
+                bool configExistia = File.Exists(caminhoConfig);
+                byte[] configOriginal = configExistia
+                    ? File.ReadAllBytes(caminhoConfig) : null;
+                string relatorio;
+                Bandeja bandejaTeste = null;
+                try
+                {
+                    bandejaTeste = new Bandeja(true);
+                    relatorio = bandejaTeste.Autoteste();
+                }
+                finally
+                {
+                    if (bandejaTeste != null) bandejaTeste.Liberar();
+                    if (configExistia) File.WriteAllBytes(caminhoConfig, configOriginal);
+                    else if (File.Exists(caminhoConfig)) File.Delete(caminhoConfig);
+                }
                 Nativo.AttachConsole(-1);
                 Console.Write(relatorio);
                 string saida = Path.Combine(
@@ -1489,13 +1779,64 @@ namespace Kwall
                 return relatorio.Contains("FALHA") ? 2 : 0;
             }
 
+            bool abrirMenu = args.Length > 0 && args[0] == "--menu";
+            if (abrirMenu && ControleRemoto.PedirMenu()) return 0;
+
+            Config inicio = Config.Carregar();
+            if (!inicio.InicioWindowsDefinido)
+            {
+                DialogResult resposta = MessageBox.Show(
+                    "Deseja que o Kwall inicie automaticamente junto com o Windows?",
+                    "Kwall — inicialização automática",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2);
+                inicio.InicioWindowsDefinido = true;
+                inicio.IniciarWindows = Inicializacao.Aceitou(resposta);
+                inicio.Salvar();
+            }
+            Inicializacao.Definir(inicio.IniciarWindows);
+            MenuDesktop.Registrar();
+
             bool primeira;
             bool primeiraLegada;
             using (Mutex travaLegada = new Mutex(true, "KaelithWall_instancia_unica", out primeiraLegada))
             using (Mutex trava = new Mutex(true, "Kwall_instancia_unica", out primeira))
             {
-                if (!primeira || !primeiraLegada) return 0;
-                Application.Run(new Bandeja());
+                if (!primeira || !primeiraLegada)
+                {
+                    if (abrirMenu)
+                    {
+                        Thread.Sleep(250);
+                        ControleRemoto.PedirMenu();
+                    }
+                    return 0;
+                }
+                while (!saidaSolicitada)
+                {
+                    Bandeja bandeja = null;
+                    try
+                    {
+                        bandeja = new Bandeja(false, abrirMenu);
+                        abrirMenu = false;
+                        Application.Run(bandeja);
+                        if (!saidaSolicitada)
+                        {
+                            Diagnostico.Registrar("ciclo",
+                                new InvalidOperationException(
+                                    "O ciclo da bandeja terminou sem solicitacao de saida."));
+                            Thread.Sleep(1000);
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Diagnostico.Registrar("ciclo", e);
+                        Thread.Sleep(1000);
+                    }
+                    finally
+                    {
+                        if (bandeja != null) bandeja.Liberar();
+                    }
+                }
             }
             return 0;
         }

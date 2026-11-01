@@ -55,6 +55,9 @@ Pelo menu do ícone na bandeja:
 - **Escolher pasta**, **pastas recentes**, **incluir subpastas** e
   **recarregar pasta**
 
+O mesmo menu também pode ser aberto clicando com o botão direito no próprio
+papel de parede e escolhendo **Kwall**.
+
 O item do topo do menu mostra o nome da imagem atual e a posição no ciclo,
 assim: `paisagem.jpg   (38/185)`.
 
@@ -94,12 +97,11 @@ não são ampliadas em 33,33% — e respeita a orientação EXIF gravada pela c�
    `C:\Users\<você>\Programas\Kwall`
 3. Execute. Na primeira vez ele pergunta qual pasta de imagens usar.
 
-Não tem instalador e não escreve nada no registro além da própria configuração
-de papel de parede do Windows. Para desinstalar, feche pelo menu (**Sair**) e
-apague a pasta.
-
-**Para iniciar junto com o Windows:** aperte `Win + R`, digite `shell:startup`,
-e coloque um atalho do executável na pasta que abrir.
+Não tem instalador. Na primeira execução, pergunta se deve iniciar junto com o
+Windows. Se você escolher **Sim**, o próprio Kwall registra o executável atual;
+se escolher **Não**, não cria a entrada e não pergunta novamente. Para
+desinstalar, feche pelo menu (**Sair**), desative **Kwall** em **Aplicativos de
+Inicialização** caso tenha autorizado e apague a pasta.
 
 ### Onde ficam as configurações
 
@@ -130,11 +132,12 @@ O próprio executável carrega a bateria de testes dentro dele:
 ./Kwall.exe --autoteste
 ```
 
-São 27 verificações da lógica de verdade — varredura da pasta, ordenação
+São 32 verificações da lógica de verdade — varredura da pasta, ordenação
 natural, navegação, rodada aleatória persistente, pausa, intervalo, filtro de
 extensão, pastas recentes, memória de enquadramento pela identidade da imagem,
 orientação EXIF, modos de ajuste, ordem distinta entre rodadas, janela entre repetições,
-enquadramento, cópia de pixels e reaplicação
+antipadrões da ordem natural, menu do desktop, enquadramento, cópia de pixels,
+retorno seguro à interface, inicialização e reaplicação
 concorrente. Sai com código 0 se passou e 2 se falhou, e **não mexe no seu papel
 de parede** enquanto testa.
 
